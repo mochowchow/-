@@ -1,0 +1,28 @@
+@import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@300..700&family=Quicksand:wght@300..700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Quicksand", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Fredoka", sans-serif;
+}
+
+body {
+  @apply bg-pink-50 text-slate-800 font-sans;
+}
+
+.cartoon-card {
+  @apply bg-white rounded-3xl shadow-xl border-4 transition-all duration-300;
+}
+
+.btn-bubble {
+  @apply px-6 py-3 rounded-full font-display font-bold text-lg shadow-lg active:scale-95 transition-all;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}

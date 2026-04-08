@@ -1,0 +1,5 @@
+{
+  "name": "Parent-Child English Starter",
+  "description": "A comprehensive tool for parents of 0-3 year olds to conduct scenario-based English enlightenment at home with dual-track teaching materials.",
+  "requestFramePermissions": ["microphone"]
+}
