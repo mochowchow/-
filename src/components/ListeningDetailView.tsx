@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   ChevronLeft, Play, Pause, RotateCcw, Volume2, 
   MessageSquare, Lightbulb, Music, BookOpen, 
-  FastForward, Rewind, Settings2
+  FastForward, Rewind, Settings2, Info
 } from 'lucide-react';
 import { ListeningContent } from '../types';
 import { speak, generateMusic } from '../services/geminiService';
@@ -46,50 +46,76 @@ export const ListeningDetailView: React.FC<ListeningDetailViewProps> = ({ conten
   };
 
   const loadAudio = async () => {
+    console.log(`ListeningDetailView: Loading audio for ${content.id} (${content.title})`);
     setIsLoading(true);
     setIsFallback(false);
+    setError(null);
     try {
       let url: string | null = null;
       if (content.type === 'rhyme') {
+        console.log('ListeningDetailView: Attempting music generation');
         url = await generateMusic(content.title, content.content);
         if (!url) {
-          console.warn("Music generation failed, falling back to TTS");
+          console.warn("ListeningDetailView: Music generation failed, falling back to TTS");
           setIsFallback(true);
-          url = await speak(content.content, isSlow);
+          url = await speak(content.content, isSlow, true);
         }
       } else {
-        url = await speak(content.audioText, isSlow);
+        console.log('ListeningDetailView: Attempting TTS generation');
+        url = await speak(content.audioText, isSlow, false);
       }
       
       if (url) {
+        console.log(`ListeningDetailView: Audio loaded successfully: ${url}`);
         setAudioUrl(url);
         if (audioRef.current) {
           audioRef.current.src = url;
-          audioRef.current.play();
-          setIsPlaying(true);
+          // Use a small delay to ensure the browser is ready
+          setTimeout(() => {
+            if (audioRef.current) {
+              audioRef.current.play().catch(err => {
+                console.warn("ListeningDetailView: Auto-play blocked or failed:", err);
+                setIsPlaying(false);
+              });
+              setIsPlaying(true);
+            }
+          }, 100);
         }
+      } else {
+        console.error("ListeningDetailView: Failed to get audio URL from service");
+        setError("无法加载音频，请重试");
       }
     } catch (error) {
-      console.error("Failed to load audio:", error);
+      console.error("ListeningDetailView: Failed to load audio:", error);
+      setError("加载音频时发生错误");
     } finally {
       setIsLoading(false);
     }
   };
 
   useEffect(() => {
+    console.log(`ListeningDetailView: Effect triggered for ${content.id}, preloadedUrl: ${preloadedUrl ? 'yes' : 'no'}`);
     if (preloadedUrl && !isSlow) {
+      console.log('ListeningDetailView: Using preloaded audio');
       setAudioUrl(preloadedUrl);
       if (audioRef.current) {
         audioRef.current.src = preloadedUrl;
-        audioRef.current.play();
+        audioRef.current.play().catch(err => {
+          console.warn("ListeningDetailView: Preloaded auto-play blocked:", err);
+          setIsPlaying(false);
+        });
         setIsPlaying(true);
       }
     } else {
       loadAudio();
     }
     return () => {
+      console.log(`ListeningDetailView: Cleaning up for ${content.id}`);
       // Don't revoke preloadedUrl as it's managed by App.tsx
-      if (audioUrl && audioUrl !== preloadedUrl) URL.revokeObjectURL(audioUrl);
+      if (audioUrl && audioUrl !== preloadedUrl) {
+        console.log(`ListeningDetailView: Revoking blob URL: ${audioUrl}`);
+        URL.revokeObjectURL(audioUrl);
+      }
     };
   }, [content.id, isSlow, preloadedUrl]);
 
@@ -97,6 +123,8 @@ export const ListeningDetailView: React.FC<ListeningDetailViewProps> = ({ conten
   useEffect(() => {
     // Remove the old scroll effect that used progress
   }, []);
+
+  const [error, setError] = useState<string | null>(null);
 
   const togglePlay = () => {
     if (audioRef.current) {
@@ -243,6 +271,22 @@ export const ListeningDetailView: React.FC<ListeningDetailViewProps> = ({ conten
 
           {/* Audio Player Card */}
           <div className="bg-white p-6 md:p-8 rounded-[40px] border-4 border-slate-100 shadow-xl">
+            {error && (
+              <div className="mb-4 p-3 bg-red-50 border-2 border-red-100 rounded-2xl flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 bg-red-100 rounded-full flex items-center justify-center text-red-600 shrink-0">
+                    <Info size={16} />
+                  </div>
+                  <p className="text-xs text-red-600 font-bold">{error}</p>
+                </div>
+                <button 
+                  onClick={loadAudio}
+                  className="px-3 py-1 bg-red-500 text-white rounded-lg text-[10px] font-black hover:bg-red-600 transition-colors"
+                >
+                  重试
+                </button>
+              </div>
+            )}
             {isFallback && content.type === 'rhyme' && (
               <div className="mb-4 p-3 bg-amber-50 border-2 border-amber-100 rounded-2xl flex items-center gap-3">
                 <div className="w-8 h-8 bg-amber-100 rounded-full flex items-center justify-center text-amber-600 shrink-0">
@@ -250,16 +294,17 @@ export const ListeningDetailView: React.FC<ListeningDetailViewProps> = ({ conten
                 </div>
                 <div className="flex-1">
                   <p className="text-[10px] font-black text-amber-800 uppercase tracking-wider">提示</p>
-                  <p className="text-xs text-amber-600 font-bold">当前处于朗读模式。选择 API Key 可开启音乐伴奏。</p>
+                  <p className="text-xs text-amber-600 font-bold">
+                    当前处于朗读模式。Lyria 音乐生成需要**付费版 API Key**。
+                    如果您已设置 Key 但仍无法播放音乐，请检查您的 Key 是否来自已启用结算的 Google Cloud 项目。
+                  </p>
                 </div>
-                {!hasApiKey && (
-                  <button 
-                    onClick={handleOpenKey}
-                    className="px-3 py-1 bg-amber-500 text-white rounded-lg text-[10px] font-black hover:bg-amber-600 transition-colors"
-                  >
-                    去设置
-                  </button>
-                )}
+                <button 
+                  onClick={handleOpenKey}
+                  className="px-3 py-1 bg-amber-500 text-white rounded-lg text-[10px] font-black hover:bg-amber-600 transition-colors"
+                >
+                  {hasApiKey ? '更换 Key' : '去设置'}
+                </button>
               </div>
             )}
             <div className="flex flex-col gap-6">

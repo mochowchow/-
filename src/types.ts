@@ -113,3 +113,11 @@ export interface ListeningContent {
   keywords?: string[];
   interactionTips: string[];
 }
+
+export interface TranslatedSentence {
+  id: string;
+  original: string;
+  english: string;
+  timestamp: number;
+  isFavorite: boolean;
+}

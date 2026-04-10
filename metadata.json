@@ -1,5 +1,5 @@
 {
   "name": "Parent-Child English Starter",
-  "description": "A comprehensive tool for parents of 0-3 year olds to conduct scenario-based English enlightenment at home with dual-track teaching materials.",
+  "description": "提供 2x2 核心功能入口，涵盖应急句库、随时翻即时翻译、每日听力及系统学习场景，全方位支持 0-3 岁宝宝的家庭英语启蒙。",
   "requestFramePermissions": ["microphone"]
 }

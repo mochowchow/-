@@ -9,21 +9,23 @@ import {
   Circle, Smile, Hand, Droplets, CloudRain, Flower2, TreePine,
   Egg, Utensils, Box, LayoutGrid, Umbrella, Gift, Ghost,
   Bath, Trees, CloudSun, Footprints, Eraser, Square, Wind, TrendingDown, CloudRain as CloudRainIcon, Frown, Angry as AngryIcon,
-  Settings2
+  Settings2, Mic, Headphones, Folder, Zap
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { CATEGORIES, CORE_ITEMS, QUICK_SCENES, SUB_SCENES, LISTENING_CONTENTS } from './constants';
 import { speak, generateImage, generateMusic } from './services/geminiService';
-import { LearningItem, BabyMaterial, QuickScene, SubSceneData, ListeningContent } from './types';
+import { LearningItem, BabyMaterial, QuickScene, SubSceneData, ListeningContent, TranslatedSentence } from './types';
 import { SubSceneView } from './components/SubSceneView';
 import { ListeningDetailView } from './components/ListeningDetailView';
+import { AnytimeTranslate } from './components/AnytimeTranslate';
 
 const ICON_MAP: Record<string, any> = {
   Sun, Gamepad2, Heart, Palmtree, Apple, Coffee, Users, 
   Baby, Moon, Waves, Plane, Bus, Car, Cat, Dog, Bird, Fish,
   Circle, Smile, Hand, Droplets, CloudRain, Flower2, TreePine,
   Egg, Utensils, Box, Book, Star, Music, Scissors, Info, Lightbulb, LayoutGrid, Umbrella, Gift, Ghost,
-  Bath, Trees, CloudSun, Footprints, Eraser, Square, Wind, TrendingDown, Frown, Angry: AngryIcon
+  Bath, Trees, CloudSun, Footprints, Eraser, Square, Wind, TrendingDown, Frown, Angry: AngryIcon,
+  Mic, Headphones: Music, Folder: LayoutGrid, Zap: Sparkles
 };
 
 const ItemCard: React.FC<{ 
@@ -90,6 +92,8 @@ export default function App() {
   const [selectedSubCategory, setSelectedSubCategory] = useState<string | null>(null);
   const [selectedQuickSceneId, setSelectedQuickSceneId] = useState<string | null>(null);
   const [selectedListeningId, setSelectedListeningId] = useState<string | null>(null);
+  const [showAnytimeTranslate, setShowAnytimeTranslate] = useState(false);
+  const [showCategories, setShowCategories] = useState(false);
   const [showAllListening, setShowAllListening] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [currentItem, setCurrentItem] = useState<LearningItem | null>(null);
@@ -101,6 +105,10 @@ export default function App() {
   const [babyAge, setBabyAge] = useState<number>(() => Number(localStorage.getItem('ps_baby_age')) || 12);
   const [favorites, setFavorites] = useState<string[]>(() => {
     const saved = localStorage.getItem('ps_favorites');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [savedSentences, setSavedSentences] = useState<TranslatedSentence[]>(() => {
+    const saved = localStorage.getItem('ps_saved_sentences');
     return saved ? JSON.parse(saved) : [];
   });
   const [progress, setProgress] = useState<Record<string, number>>(() => {
@@ -120,6 +128,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('ps_favorites', JSON.stringify(favorites));
   }, [favorites]);
+
+  useEffect(() => {
+    localStorage.setItem('ps_saved_sentences', JSON.stringify(savedSentences));
+  }, [savedSentences]);
 
   useEffect(() => {
     localStorage.setItem('ps_progress', JSON.stringify(progress));
@@ -225,25 +237,30 @@ export default function App() {
 
   // Pre-load listening audio
   useEffect(() => {
+    const loadedUrls: string[] = [];
+    
     const loadPreload = async (item: ListeningContent) => {
       if (!item || preloadedAudio[item.id]) return;
+      console.log(`App: Pre-loading audio for ${item.id} (${item.title})`);
       try {
         let url = null;
         if (item.type === 'rhyme') {
           url = await generateMusic(item.title, item.content);
           if (!url) {
-            console.warn(`Pre-loading music failed for ${item.id}, falling back to TTS`);
-            url = await speak(item.content);
+            console.warn(`App: Pre-loading music failed for ${item.id}, falling back to TTS`);
+            url = await speak(item.content, false, true);
           }
         } else {
-          url = await speak(item.audioText);
+          url = await speak(item.audioText, false, false);
         }
         
         if (url) {
+          console.log(`App: Pre-loaded audio for ${item.id}: ${url}`);
           setPreloadedAudio(prev => ({ ...prev, [item.id]: url }));
+          loadedUrls.push(url);
         }
       } catch (error) {
-        console.error(`Pre-loading failed for ${item.id}:`, error);
+        console.error(`App: Pre-loading failed for ${item.id}:`, error);
       }
     };
 
@@ -252,10 +269,17 @@ export default function App() {
       loadPreload(listeningSelection);
     }
 
-    // Pre-load first 5 items in the list
-    LISTENING_CONTENTS.slice(0, 5).forEach(item => {
+    // Pre-load first 3 items in the list (reduced from 5 to save memory)
+    LISTENING_CONTENTS.slice(0, 3).forEach(item => {
       loadPreload(item);
     });
+
+    return () => {
+      // Cleanup preloaded blobs on unmount or when dependencies change
+      // Actually, we want to keep them while the app is alive, but maybe limit them
+      // For now, let's just log
+      console.log('App: Cleaning up preloaded audio (if any)');
+    };
   }, [listeningSelection]);
 
   // Current Baby Material
@@ -310,6 +334,74 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#FFF9F0] font-sans text-slate-800">
+      {/* Global Overlays */}
+      <AnimatePresence>
+        {showAnytimeTranslate && (
+          <AnytimeTranslate 
+            onBack={() => setShowAnytimeTranslate(false)}
+            onSave={(sentence) => {
+              setSavedSentences(prev => {
+                const exists = prev.find(s => s.original === sentence.original);
+                if (exists) return prev;
+                return [sentence, ...prev];
+              });
+            }}
+            savedSentences={savedSentences}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showCategories && !selectedCategoryId && !searchQuery && (
+          <motion.div 
+            initial={{ opacity: 0, x: '100%' }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: '100%' }}
+            className="fixed inset-0 bg-[#FFF9F0] z-50 overflow-y-auto"
+          >
+            <div className="max-w-5xl mx-auto px-4 py-8">
+              <div className="flex items-center justify-between mb-8">
+                <button 
+                  onClick={() => setShowCategories(false)}
+                  className="p-3 bg-white border-4 border-slate-100 rounded-2xl text-slate-400 hover:text-pink-500 transition-colors shadow-sm"
+                >
+                  <ChevronLeft size={24} />
+                </button>
+                <h2 className="text-2xl font-black text-slate-800">场景分类</h2>
+                <div className="w-12" />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {CATEGORIES.map((category, idx) => (
+                  <motion.button
+                    key={category.id}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: idx * 0.1 }}
+                    onClick={() => {
+                      setSelectedCategoryId(category.id);
+                      setShowCategories(false);
+                    }}
+                    className="bg-white p-8 rounded-[40px] border-4 border-slate-100 hover:border-pink-200 transition-all text-left flex items-center gap-6 shadow-sm hover:shadow-xl group"
+                  >
+                    <div className={`w-20 h-20 rounded-3xl flex items-center justify-center group-hover:scale-110 transition-transform ${category.color.split(' ')[0]}`}>
+                      {(() => {
+                        const Icon = ICON_MAP[category.icon] || Sun;
+                        return <Icon size={40} className={category.color.split(' ')[2]} />;
+                      })()}
+                    </div>
+                    <div>
+                      <h3 className="text-2xl font-black text-slate-800 mb-1">{category.chineseTitle}</h3>
+                      <p className="text-slate-400 font-bold">{category.description}</p>
+                    </div>
+                  </motion.button>
+                ))}
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <AnimatePresence mode="wait">
         {!isLearning ? (
           <motion.div 
@@ -384,13 +476,99 @@ export default function App() {
               </motion.div>
             )}
 
-            {/* Quick Search Entry & Integrated Search */}
-            {!showDashboard && !selectedCategoryId && !selectedQuickSceneId && !selectedListeningId && (
+            {/* 2x2 Core Navigation Grid */}
+            {!showDashboard && !selectedCategoryId && !selectedQuickSceneId && !selectedListeningId && !showAnytimeTranslate && !showCategories && !searchQuery && (
+              <motion.div 
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="grid grid-cols-2 gap-4 md:gap-8 mb-12"
+              >
+                {/* 1. 现在玩什么？ */}
+                <button 
+                  onClick={() => {
+                    setSearchQuery(' '); // Trigger search view
+                  }}
+                  className="bg-white p-6 md:p-10 rounded-[32px] md:rounded-[48px] border-4 border-slate-100 hover:border-pink-200 transition-all flex flex-col items-center text-center gap-4 shadow-sm hover:shadow-xl group"
+                >
+                  <div className="w-16 h-16 md:w-24 md:h-24 bg-pink-100 rounded-3xl flex items-center justify-center text-pink-500 group-hover:scale-110 transition-transform">
+                    <Zap size={32} className="md:hidden" />
+                    <Zap size={48} className="hidden md:block" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg md:text-2xl font-black text-slate-800">现在玩什么？</h3>
+                    <p className="text-slate-400 font-bold text-[10px] md:text-sm">应急句库</p>
+                  </div>
+                </button>
+
+                {/* 2. 随时翻 */}
+                <button 
+                  onClick={() => setShowAnytimeTranslate(true)}
+                  className="bg-white p-6 md:p-10 rounded-[32px] md:rounded-[48px] border-4 border-slate-100 hover:border-pink-200 transition-all flex flex-col items-center text-center gap-4 shadow-sm hover:shadow-xl group"
+                >
+                  <div className="w-16 h-16 md:w-24 md:h-24 bg-blue-100 rounded-3xl flex items-center justify-center text-blue-500 group-hover:scale-110 transition-transform">
+                    <Mic size={32} className="md:hidden" />
+                    <Mic size={48} className="hidden md:block" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg md:text-2xl font-black text-slate-800">随时翻</h3>
+                    <p className="text-slate-400 font-bold text-[10px] md:text-sm">即时翻译</p>
+                  </div>
+                </button>
+
+                {/* 3. 磨耳朵时光 */}
+                <button 
+                  onClick={() => {
+                    setSelectedListeningId(listeningSelection.id);
+                  }}
+                  className="bg-white p-6 md:p-10 rounded-[32px] md:rounded-[48px] border-4 border-slate-100 hover:border-pink-200 transition-all flex flex-col items-center text-center gap-4 shadow-sm hover:shadow-xl group"
+                >
+                  <div className="w-16 h-16 md:w-24 md:h-24 bg-purple-100 rounded-3xl flex items-center justify-center text-purple-500 group-hover:scale-110 transition-transform">
+                    <Headphones size={32} className="md:hidden" />
+                    <Headphones size={48} className="hidden md:block" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg md:text-2xl font-black text-slate-800">磨耳朵时光</h3>
+                    <p className="text-slate-400 font-bold text-[10px] md:text-sm">每日听力</p>
+                  </div>
+                </button>
+
+                {/* 4. 场景分类 */}
+                <button 
+                  onClick={() => {
+                    setShowCategories(true);
+                  }}
+                  className="bg-white p-6 md:p-10 rounded-[32px] md:rounded-[48px] border-4 border-slate-100 hover:border-pink-200 transition-all flex flex-col items-center text-center gap-4 shadow-sm hover:shadow-xl group"
+                >
+                  <div className="w-16 h-16 md:w-24 md:h-24 bg-green-100 rounded-3xl flex items-center justify-center text-green-500 group-hover:scale-110 transition-transform">
+                    <Folder size={32} className="md:hidden" />
+                    <Folder size={48} className="hidden md:block" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg md:text-2xl font-black text-slate-800">场景分类</h3>
+                    <p className="text-slate-400 font-bold text-[10px] md:text-sm">系统学习</p>
+                  </div>
+                </button>
+              </motion.div>
+            )}
+
+            {/* Search Bar (Moved below grid or integrated) */}
+            {!showDashboard && !selectedCategoryId && !selectedQuickSceneId && !selectedListeningId && !showAnytimeTranslate && !showCategories && searchQuery && (
               <motion.div 
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
                 className="mb-8 md:mb-12"
               >
+                <div className="flex items-center justify-between mb-6">
+                  <button 
+                    onClick={() => setSearchQuery('')}
+                    className="flex items-center gap-2 text-slate-400 font-black hover:text-pink-500 transition-colors"
+                  >
+                    <ChevronLeft size={20} />
+                    <span>返回首页</span>
+                  </button>
+                  <h2 className="text-2xl font-black text-slate-800">搜索结果</h2>
+                  <div className="w-20" />
+                </div>
                 <div className="bg-gradient-to-r from-pink-500 to-rose-500 rounded-[32px] md:rounded-[40px] p-0.5 md:p-1 shadow-xl">
                   <div className="bg-white rounded-[30px] md:rounded-[38px] p-5 md:p-8 space-y-6 md:space-y-8">
                     <div className="flex flex-col md:flex-row items-center justify-between gap-4 md:gap-6">
@@ -675,284 +853,68 @@ export default function App() {
 
                 {/* Quick Scene Detail */}
                 {selectedQuickSceneId && (
-                  (() => {
-                    const subScene = SUB_SCENES.find(s => s.id === selectedQuickSceneId);
-                    if (subScene) {
-                      return (
-                        <SubSceneView 
-                          scene={subScene}
-                          onBack={() => setSelectedQuickSceneId(null)}
-                          onPlay={handlePlayAudio}
-                          onStartLearning={startLearning}
-                        />
-                      );
-                    }
-
-                    if (quickSceneData && currentQuickScene) {
-                      return (
-                        <motion.div 
-                          initial={{ opacity: 0, y: 20 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          className="space-y-6 md:space-y-10"
-                        >
-                          <div className="flex items-center justify-between gap-4">
-                            <div className="flex items-center gap-3 md:gap-4">
-                              <button 
-                                onClick={() => setSelectedQuickSceneId(null)}
-                                className="p-2 md:p-3 bg-white border-4 border-slate-100 rounded-xl md:rounded-2xl text-slate-400 hover:text-pink-500 transition-colors"
-                              >
-                                <ChevronLeft size={20} md:size={24} />
-                              </button>
-                              <div>
-                                <h2 className="text-xl md:text-3xl font-black text-slate-800">{currentQuickScene.chineseTitle}</h2>
-                                <p className="text-xs md:text-slate-400 font-bold text-slate-400">{currentQuickScene.title}</p>
-                              </div>
-                            </div>
-                            <div className={`w-12 h-12 md:w-16 md:h-16 rounded-xl md:rounded-2xl flex items-center justify-center text-white shrink-0 ${currentQuickScene.color}`}>
-                              {(() => {
-                                const Icon = ICON_MAP[currentQuickScene.icon] || Sparkles;
-                                return (
-                                  <>
-                                    <Icon size={24} className="md:hidden" />
-                                    <Icon size={32} className="hidden md:block" />
-                                  </>
-                                );
-                              })()}
-                            </div>
-                          </div>
-
-                          <section>
-                            <div className="flex items-center gap-2 mb-4 md:mb-6">
-                              <MessageCircle className="text-pink-500" size={20} md:size={24} />
-                              <h3 className="text-lg md:text-2xl font-black">场景句库 (Sentence Library)</h3>
-                            </div>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
-                              {quickSceneData.sentences.map((s, idx) => (
-                                <motion.div 
-                                  key={idx}
-                                  whileHover={{ scale: 1.02 }}
-                                  className="bg-white p-4 md:p-6 rounded-2xl md:rounded-3xl border-4 border-slate-50 shadow-sm hover:shadow-md transition-all group"
-                                >
-                                  <div className="flex items-start justify-between gap-3 md:gap-4">
-                                    <div className="flex-1">
-                                      <span className="text-[8px] md:text-[10px] font-black text-pink-300 uppercase tracking-wider mb-1 block">
-                                        From: {s.itemTitle}
-                                      </span>
-                                      <p className="text-base md:text-xl font-black text-slate-800 mb-0.5 md:mb-1 leading-tight">{s.english}</p>
-                                      <p className="text-xs md:text-slate-500 font-bold text-slate-500">{s.chinese}</p>
-                                    </div>
-                                    <button 
-                                      onClick={() => handlePlayAudio(s.audioText)}
-                                      className="w-10 h-10 md:w-12 md:h-12 bg-pink-50 text-pink-500 rounded-xl md:rounded-2xl flex items-center justify-center group-hover:bg-pink-500 group-hover:text-white transition-all shrink-0"
-                                    >
-                                      <Volume2 size={18} md:size={20} />
-                                    </button>
-                                  </div>
-                                </motion.div>
-                              ))}
-                            </div>
-                          </section>
-
-                          <section>
-                            <div className="flex items-center gap-2 mb-4 md:mb-6">
-                              <LayoutGrid className="text-blue-500" size={20} md:size={24} />
-                              <h3 className="text-lg md:text-2xl font-black">扩展词汇 (Related Vocabulary)</h3>
-                            </div>
-                            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 md:gap-4">
-                              {quickSceneData.relatedItems.map(item => (
-                                <button
-                                  key={item.id}
-                                  onClick={() => {
-                                    startLearning(item);
-                                    setSelectedQuickSceneId(null);
-                                  }}
-                                  className="bg-white p-3 md:p-4 rounded-2xl md:rounded-3xl border-4 border-slate-50 hover:border-blue-100 transition-all flex flex-col items-center gap-2 md:gap-3 group"
-                                >
-                                  <div className="w-10 h-10 md:w-12 md:h-12 bg-blue-50 text-blue-500 rounded-lg md:rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
-                                    {(() => {
-                                      const Icon = ICON_MAP[item.icon] || Sun;
-                                      return <Icon size={20} md:size={24} />;
-                                    })()}
-                                  </div>
-                                  <div className="text-center">
-                                    <p className="font-black text-xs md:text-sm text-slate-800">{item.title}</p>
-                                    <p className="text-[8px] md:text-[10px] text-slate-400 font-bold">{item.chineseTitle}</p>
-                                  </div>
-                                </button>
-                              ))}
-                            </div>
-                          </section>
-                        </motion.div>
-                      );
-                    }
-                    return null;
-                  })()
+                  <motion.div 
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="space-y-8"
+                  >
+                    <div className="flex items-center justify-between mb-6">
+                      <button 
+                        onClick={() => setSelectedQuickSceneId(null)}
+                        className="p-3 bg-white border-4 border-slate-100 rounded-2xl text-slate-400 hover:text-pink-500 transition-colors shadow-sm"
+                      >
+                        <ChevronLeft size={24} />
+                      </button>
+                      <h2 className="text-2xl font-black text-slate-800">应急句库</h2>
+                      <div className="w-12" />
+                    </div>
+                    <SubSceneView 
+                      scene={QUICK_SCENES.find(s => s.id === selectedQuickSceneId)!}
+                      onBack={() => setSelectedQuickSceneId(null)}
+                      onPlay={handlePlayAudio}
+                      onStartLearning={startLearning}
+                    />
+                  </motion.div>
                 )}
-                {/* Listening Detail View */}
+
+                {/* Listening View */}
                 {selectedListeningId && (
-                  (() => {
-                    const content = LISTENING_CONTENTS.find(c => c.id === selectedListeningId);
-                    if (content) {
+                  <motion.div 
+                    key={`listening-${selectedListeningId}`}
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="space-y-8"
+                  >
+                    <div className="flex items-center justify-between mb-6">
+                      <button 
+                        onClick={() => setSelectedListeningId(null)}
+                        className="p-3 bg-white border-4 border-slate-100 rounded-2xl text-slate-400 hover:text-pink-500 transition-colors shadow-sm"
+                      >
+                        <ChevronLeft size={24} />
+                      </button>
+                      <h2 className="text-2xl font-black text-slate-800">磨耳朵时光</h2>
+                      <div className="w-12" />
+                    </div>
+                    {(() => {
+                      const content = LISTENING_CONTENTS.find(l => l.id === selectedListeningId);
+                      if (!content) {
+                        console.error(`App: Listening content not found for ID: ${selectedListeningId}`);
+                        setSelectedListeningId(null);
+                        return null;
+                      }
                       return (
                         <ListeningDetailView 
                           content={content}
                           onBack={() => setSelectedListeningId(null)}
-                          preloadedUrl={preloadedAudio[content.id]}
+                          preloadedUrl={preloadedAudio[selectedListeningId]}
                         />
                       );
-                    }
-                    return null;
-                  })()
-                )}
-
-                {/* Level 1: Categories */}
-                {!selectedCategoryId && !selectedQuickSceneId && !selectedListeningId && !searchQuery && (
-                  <>
-                    {/* Listening Time (磨耳朵时光) */}
-                    {listeningSelection && (
-                      <motion.section 
-                        initial={{ y: 20, opacity: 0 }}
-                        animate={{ y: 0, opacity: 1 }}
-                        className="mb-12"
-                      >
-                        <div className="flex items-center justify-between mb-4">
-                          <div className="flex items-center gap-2">
-                            <Music className="text-pink-500" size={20} md:size={24} />
-                            <h2 className="text-xl md:text-2xl font-black">磨耳朵时光</h2>
-                          </div>
-                          <div className="flex items-center gap-4">
-                            {babyName && (
-                              <span className="hidden md:inline text-slate-400 font-bold text-xs md:text-base">
-                                {babyName}的语感培养时刻
-                              </span>
-                            )}
-                            <button 
-                              onClick={() => setShowAllListening(!showAllListening)}
-                              className="text-pink-500 font-black text-sm md:text-base hover:underline flex items-center gap-1"
-                            >
-                              {showAllListening ? '收起' : '查看全部'}
-                              <ChevronRight size={16} className={`transition-transform ${showAllListening ? 'rotate-90' : ''}`} />
-                            </button>
-                          </div>
-                        </div>
-
-                        <AnimatePresence mode="wait">
-                          {showAllListening ? (
-                            <motion.div 
-                              key="all-listening"
-                              initial={{ opacity: 0, height: 0 }}
-                              animate={{ opacity: 1, height: 'auto' }}
-                              exit={{ opacity: 0, height: 0 }}
-                              className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"
-                            >
-                              {LISTENING_CONTENTS.map(item => (
-                                <button 
-                                  key={item.id}
-                                  onClick={() => setSelectedListeningId(item.id)}
-                                  className="bg-white p-4 rounded-3xl border-4 border-slate-100 hover:border-pink-200 transition-all text-left flex gap-4 items-center group"
-                                >
-                                  <div className="w-16 h-16 rounded-2xl overflow-hidden shrink-0">
-                                    <img 
-                                      src={item.coverImage} 
-                                      alt={item.title}
-                                      className="w-full h-full object-cover group-hover:scale-110 transition-transform"
-                                      referrerPolicy="no-referrer"
-                                    />
-                                  </div>
-                                  <div className="flex-1 min-w-0">
-                                    <h4 className="font-black text-slate-800 truncate">{item.chineseTitle}</h4>
-                                    <p className="text-[10px] font-bold text-slate-400 truncate uppercase tracking-wider">{item.title}</p>
-                                  </div>
-                                  <div className="w-8 h-8 bg-pink-50 text-pink-500 rounded-lg flex items-center justify-center group-hover:bg-pink-500 group-hover:text-white transition-colors">
-                                    <Play fill="currentColor" size={16} />
-                                  </div>
-                                </button>
-                              ))}
-                            </motion.div>
-                          ) : (
-                            <motion.button 
-                              key="daily-listening"
-                              initial={{ opacity: 0 }}
-                              animate={{ opacity: 1 }}
-                              exit={{ opacity: 0 }}
-                              onClick={() => setSelectedListeningId(listeningSelection.id)}
-                              className="w-full bg-white p-4 md:p-6 rounded-[40px] border-4 border-slate-100 shadow-xl hover:shadow-2xl transition-all group text-left flex flex-col md:flex-row gap-6 items-center"
-                            >
-                              <div className="w-full md:w-48 h-48 md:h-32 rounded-[32px] overflow-hidden shrink-0 relative">
-                                <img 
-                                  src={listeningSelection.coverImage} 
-                                  alt={listeningSelection.title}
-                                  className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
-                                  referrerPolicy="no-referrer"
-                                />
-                                <div className="absolute inset-0 bg-black/20 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                                  <Play fill="white" size={32} className="text-white" />
-                                </div>
-                              </div>
-                              <div className="flex-1">
-                                <div className="flex items-center gap-2 mb-2">
-                                  <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${listeningSelection.type === 'rhyme' ? 'bg-pink-100 text-pink-600' : 'bg-blue-100 text-blue-600'}`}>
-                                    {listeningSelection.type === 'rhyme' ? '经典儿歌' : '迷你故事'}
-                                  </span>
-                                  <span className="text-slate-300 text-xs font-bold">每日更新</span>
-                                </div>
-                                <h3 className="text-xl md:text-2xl font-black text-slate-800 mb-2">{listeningSelection.chineseTitle}</h3>
-                                <p className="text-slate-500 font-bold text-sm line-clamp-2">
-                                  {listeningSelection.type === 'rhyme' ? `核心句：${listeningSelection.coreSentence}` : listeningSelection.content.slice(0, 50) + '...'}
-                                </p>
-                              </div>
-                              <div className="w-14 h-14 bg-pink-500 text-white rounded-2xl flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform shrink-0">
-                                <Play fill="currentColor" size={24} />
-                              </div>
-                            </motion.button>
-                          )}
-                        </AnimatePresence>
-                      </motion.section>
-                    )}
-
-                    <section className="mb-8 md:mb-12">
-                      <div className="flex items-center gap-2 mb-4 md:mb-6">
-                        <Star className="text-yellow-500" size={20} md:size={24} />
-                        <h2 className="text-xl md:text-2xl font-black">场景分类</h2>
-                      </div>
-                      <div className="flex overflow-x-auto pb-4 -mx-4 px-4 md:mx-0 md:px-0 md:grid md:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6 no-scrollbar">
-                        {CATEGORIES.map(cat => {
-                          const Icon = ICON_MAP[cat.icon] || Sun;
-                          return (
-                            <motion.button
-                              key={cat.id}
-                              whileHover={{ y: -8, scale: 1.02 }}
-                              whileTap={{ scale: 0.98 }}
-                              onClick={() => {
-                                setSelectedCategoryId(cat.id);
-                                setSelectedSubCategory(null);
-                                setSelectedQuickSceneId(null);
-                                setSelectedListeningId(null);
-                              }}
-                              className="shrink-0 w-48 md:w-auto bg-white p-6 md:p-8 rounded-[32px] md:rounded-[48px] border-4 border-slate-100 hover:border-pink-200 transition-all flex flex-col items-center gap-4 md:gap-6 shadow-sm hover:shadow-xl group"
-                            >
-                              <div className={`w-16 h-16 md:w-24 md:h-24 rounded-[24px] md:rounded-[32px] flex items-center justify-center ${cat.color.split(' ')[0]} group-hover:scale-110 transition-transform`}>
-                                <Icon size={32} className={`${cat.color.split(' ')[2]} md:hidden`} />
-                                <Icon size={48} className={`${cat.color.split(' ')[2]} hidden md:block`} />
-                              </div>
-                              <div className="text-center">
-                                <h3 className="text-lg md:text-2xl font-black text-slate-800 mb-0.5 md:mb-1">{cat.chineseTitle}</h3>
-                                <p className="text-slate-400 font-bold text-[10px] md:text-sm">{cat.title}</p>
-                              </div>
-                              <div className="w-full pt-3 md:pt-4 border-t-2 border-slate-50 flex items-center justify-center gap-1 md:gap-2 text-pink-500 font-black text-xs md:text-base">
-                                <span>进入探索</span>
-                                <ChevronRight size={14} md:size={18} />
-                              </div>
-                            </motion.button>
-                          );
-                        })}
-                      </div>
-                    </section>
-                  </>
+                    })()}
+                  </motion.div>
                 )}
 
                 {/* Level 2: Sub-categories */}
-                {selectedCategoryId && !selectedSubCategory && !searchQuery && (
+                {selectedCategoryId && !selectedSubCategory && !selectedQuickSceneId && !selectedListeningId && !searchQuery && (
                   <motion.section 
                     initial={{ opacity: 0, x: 20 }}
                     animate={{ opacity: 1, x: 0 }}
@@ -960,6 +922,12 @@ export default function App() {
                   >
                     <div className="flex items-center justify-between mb-8">
                       <div className="flex items-center gap-3">
+                        <button 
+                          onClick={() => setSelectedCategoryId(null)}
+                          className="p-3 bg-white border-4 border-slate-100 rounded-2xl text-slate-400 hover:text-pink-500 transition-colors shadow-sm"
+                        >
+                          <ChevronLeft size={24} />
+                        </button>
                         <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${currentCategory?.color.split(' ')[0]}`}>
                           {(() => {
                             const Icon = ICON_MAP[currentCategory?.icon || ''] || Sun;
@@ -971,12 +939,6 @@ export default function App() {
                           <p className="text-slate-400 font-bold">{currentCategory?.description}</p>
                         </div>
                       </div>
-                      <button 
-                        onClick={() => setSelectedCategoryId(null)}
-                        className="p-3 bg-slate-100 text-slate-500 rounded-2xl hover:bg-slate-200 transition-colors"
-                      >
-                        <ChevronLeft size={24} />
-                      </button>
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1006,21 +968,22 @@ export default function App() {
                 )}
 
                 {/* Level 3: Items List */}
-                {(selectedSubCategory || searchQuery) && (
+                {(selectedSubCategory || searchQuery) && !selectedQuickSceneId && !selectedListeningId && (
                   <motion.section
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                   >
                     <div className="flex items-center justify-between mb-8">
                       <div className="flex items-center gap-3">
-                        {!searchQuery && (
-                          <button 
-                            onClick={() => setSelectedSubCategory(null)}
-                            className="p-2 bg-slate-100 text-slate-500 rounded-xl hover:bg-slate-200 transition-colors"
-                          >
-                            <ChevronLeft size={20} />
-                          </button>
-                        )}
+                        <button 
+                          onClick={() => {
+                            if (searchQuery) setSearchQuery('');
+                            else setSelectedSubCategory(null);
+                          }}
+                          className="p-3 bg-white border-4 border-slate-100 rounded-2xl text-slate-400 hover:text-pink-500 transition-colors shadow-sm"
+                        >
+                          <ChevronLeft size={24} />
+                        </button>
                         <div className="flex items-center gap-2">
                           <BookOpen className="text-blue-500" size={24} />
                           <h2 className="text-2xl font-black">
