@@ -26,8 +26,9 @@ export const AnytimeTranslate: React.FC<AnytimeTranslateProps> = ({ onBack, onSa
   
   const recognitionRef = useRef<any>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-
   const isRecordingRef = useRef(false);
+  const shouldStopRef = useRef(false);
+  const startTimeoutRef = useRef<any>(null);
 
   useEffect(() => {
     console.log('AnytimeTranslate: Initializing Speech Recognition');
@@ -37,103 +38,56 @@ export const AnytimeTranslate: React.FC<AnytimeTranslateProps> = ({ onBack, onSa
       setError('系统配置错误：缺少 API Key');
     }
 
-    // Initialize Web Speech API
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      try {
-        recognitionRef.current = new SpeechRecognition();
-        recognitionRef.current.continuous = false;
-        recognitionRef.current.interimResults = false;
-        recognitionRef.current.lang = 'zh-CN';
+    initRecognition();
 
-        recognitionRef.current.onstart = () => {
-          console.log('AnytimeTranslate: Speech recognition started');
-          setIsRecording(true);
-          isRecordingRef.current = true;
-        };
-
-        recognitionRef.current.onresult = async (event: any) => {
-          const transcript = event.results[0][0].transcript;
-          console.log('AnytimeTranslate: Transcript received:', transcript);
-          handleTranslate(transcript);
-        };
-
-        recognitionRef.current.onnomatch = () => {
-          console.log('AnytimeTranslate: No match found');
-          if (isDialogueMode) {
-            // Restart listening if in dialogue mode
-            setTimeout(() => {
-              if (isDialogueMode && !isRecordingRef.current) {
-                startRecording();
-              }
-            }, 500);
-          }
-        };
-
-        recognitionRef.current.onerror = (event: any) => {
-          console.error('AnytimeTranslate: Speech recognition error:', event.error);
-          if (event.error === 'not-allowed') {
-            setError('请允许麦克风权限以使用语音翻译');
-          } else if (event.error !== 'aborted') {
-            setError('没听清，请再试一次');
-          }
-          setIsRecording(false);
-          isRecordingRef.current = false;
-        };
-
-        recognitionRef.current.onend = () => {
-          console.log('AnytimeTranslate: Speech recognition ended');
-          setIsRecording(false);
-          isRecordingRef.current = false;
-        };
-      } catch (err) {
-        console.error('AnytimeTranslate: Failed to initialize SpeechRecognition:', err);
-        setError('语音识别初始化失败');
+    return () => {
+      if (startTimeoutRef.current) clearTimeout(startTimeoutRef.current);
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.abort();
+        } catch (e) {}
       }
-    } else {
-      console.warn('AnytimeTranslate: SpeechRecognition not supported in this browser');
-      setError('您的浏览器不支持语音识别，请手动输入');
-    }
+    };
   }, []);
 
-  const startRecording = (e?: React.PointerEvent) => {
+  const startRecording = (e?: React.PointerEvent | React.MouseEvent | React.TouchEvent) => {
     console.log('AnytimeTranslate: startRecording triggered');
-    if (e) {
-      if (e.button !== 0) return; // Only left click
-    }
+    if (e && 'button' in e && e.button !== 0) return;
 
     if (!recognitionRef.current) {
-      console.error('AnytimeTranslate: recognitionRef.current is null');
-      setError('语音识别未就绪，请尝试手动输入');
-      return;
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (!SpeechRecognition) {
+        setError('您的浏览器不支持语音识别，请手动输入');
+        return;
+      }
+      // Re-initialize if lost
+      initRecognition();
     }
 
-    if (isRecordingRef.current) {
-      console.warn('AnytimeTranslate: Already recording, ignoring start request');
-      return;
-    }
+    if (isRecordingRef.current) return;
 
     try {
       setError(null);
       setResult(null);
+      shouldStopRef.current = false;
       recognitionRef.current.start();
       
-      // Haptic feedback if available
       if (window.navigator && window.navigator.vibrate) {
         window.navigator.vibrate(50);
       }
     } catch (err) {
       console.error('AnytimeTranslate: Start recording error:', err);
-      setIsRecording(false);
-      isRecordingRef.current = false;
       // If it's already started, we might get an error, but that's okay
     }
   };
 
-  const stopRecording = (e?: React.PointerEvent) => {
+  const stopRecording = (e?: React.PointerEvent | React.MouseEvent | React.TouchEvent) => {
     console.log('AnytimeTranslate: stopRecording triggered');
-    if (!recognitionRef.current || !isRecordingRef.current) {
-      console.log('AnytimeTranslate: Not recording or recognition null, ignoring stop request');
+    if (!recognitionRef.current) return;
+    
+    if (!isRecordingRef.current) {
+      console.log('AnytimeTranslate: Stop requested before start completed, queuing stop');
+      shouldStopRef.current = true;
       return;
     }
     
@@ -142,7 +96,53 @@ export const AnytimeTranslate: React.FC<AnytimeTranslateProps> = ({ onBack, onSa
     } catch (err) {
       console.error('AnytimeTranslate: Stop recording error:', err);
     }
-    // We don't set isRecording false here, we wait for onend
+  };
+
+  const initRecognition = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
+
+    recognitionRef.current = new SpeechRecognition();
+    recognitionRef.current.continuous = false;
+    recognitionRef.current.interimResults = false;
+    recognitionRef.current.lang = 'zh-CN';
+
+    recognitionRef.current.onstart = () => {
+      setIsRecording(true);
+      isRecordingRef.current = true;
+      if (shouldStopRef.current) {
+        recognitionRef.current.stop();
+        shouldStopRef.current = false;
+      }
+    };
+
+    recognitionRef.current.onresult = async (event: any) => {
+      const transcript = event.results[0][0].transcript;
+      handleTranslate(transcript);
+    };
+
+    recognitionRef.current.onerror = (event: any) => {
+      console.error('AnytimeTranslate: Error:', event.error);
+      if (event.error === 'not-allowed') {
+        setError('请在浏览器设置中开启麦克风权限');
+      } else if (event.error === 'no-speech') {
+        setError('没听到声音，请大声一点');
+      } else if (event.error !== 'aborted') {
+        setError('识别出错，请再试一次');
+      }
+      setIsRecording(false);
+      isRecordingRef.current = false;
+    };
+
+    recognitionRef.current.onend = () => {
+      setIsRecording(false);
+      isRecordingRef.current = false;
+      if (isDialogueMode && !isProcessing) {
+        startTimeoutRef.current = setTimeout(() => {
+          if (isDialogueMode && !isRecordingRef.current) startRecording();
+        }, 1000);
+      }
+    };
   };
 
   const handleTranslate = async (text: string) => {
@@ -377,10 +377,11 @@ export const AnytimeTranslate: React.FC<AnytimeTranslateProps> = ({ onBack, onSa
                   />
                 )}
                 <button 
-                  onPointerDown={isDialogueMode ? undefined : startRecording}
-                  onPointerUp={isDialogueMode ? undefined : stopRecording}
-                  onPointerLeave={isDialogueMode ? undefined : stopRecording}
-                  onPointerCancel={isDialogueMode ? undefined : stopRecording}
+                  onMouseDown={isDialogueMode ? undefined : startRecording}
+                  onMouseUp={isDialogueMode ? undefined : stopRecording}
+                  onMouseLeave={isDialogueMode ? undefined : stopRecording}
+                  onTouchStart={isDialogueMode ? undefined : startRecording}
+                  onTouchEnd={isDialogueMode ? undefined : stopRecording}
                   onContextMenu={(e) => e.preventDefault()}
                   className={`w-32 h-32 md:w-40 md:h-40 rounded-full flex items-center justify-center transition-all shadow-xl active:scale-95 touch-none select-none ${
                     isRecording 
